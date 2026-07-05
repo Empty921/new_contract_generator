@@ -308,7 +308,7 @@ class DocumentGenerator
         }
 
         return match ($variable->type) {
-            'boolean' => $value ? 'Да' : 'Нет',
+            'boolean' => $value ? ($variable->default_value ?? 'Да') : '',
             'date' => Carbon::parse($value)->format('d.m.Y'),
             'currency' => number_format((float) $value, 2, ',', ' ').' ₽',
             default => (string) $value,

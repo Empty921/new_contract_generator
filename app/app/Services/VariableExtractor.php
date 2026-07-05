@@ -152,4 +152,3 @@ class VariableExtractor
         return preg_replace('/<[^>]+>/', '', $xml);
     }
 }
-

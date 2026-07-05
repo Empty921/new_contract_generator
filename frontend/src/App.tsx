@@ -466,12 +466,23 @@ function VariablesPage({
   const [isUploadingVersion, setIsUploadingVersion] = useState(false);
   const [error, setError] = useState('');
 
+  // 🔥 Храним строку для опций в отдельном состоянии
+  const [optionsStrings, setOptionsStrings] = useState<Record<string, string>>({});
+
   useEffect(() => {
     setIsLoading(true);
     setError('');
     getTemplateVariables(template.id)
       .then((items) => {
         setVariables(items);
+        // 🔥 Инициализируем строки опций из существующих данных
+        const initialOptions: Record<string, string> = {};
+        items.forEach((v) => {
+          if (v.type === 'select' && Array.isArray(v.options)) {
+            initialOptions[v.id] = v.options.join(', ');
+          }
+        });
+        setOptionsStrings(initialOptions);
       })
       .catch((requestError) => setError(getErrorMessage(requestError)))
       .finally(() => setIsLoading(false));
@@ -479,6 +490,14 @@ function VariablesPage({
 
   const updateVariable = (id: string, patch: Partial<TemplateVariable>) => {
     setVariables((current) => current.map((variable) => (variable.id === id ? { ...variable, ...patch } : variable)));
+  };
+
+  // 🔥 Обновление опций
+  const updateOptions = (id: string, value: string) => {
+    setOptionsStrings((prev) => ({ ...prev, [id]: value }));
+    // Разбиваем строку на массив и сохраняем в переменную
+    const options = value.split(',').map(s => s.trim()).filter(Boolean);
+    updateVariable(id, { options: options.length > 0 ? options : undefined });
   };
 
   const save = async () => {
@@ -563,10 +582,12 @@ function VariablesPage({
         {variables.map((variable) => (
           <article className="variable-row" key={variable.id}>
             <div className="variable-code">{`{{${variable.name}}}`}</div>
+            
             <label>
               Подпись
               <input value={variable.label} onChange={(event) => updateVariable(variable.id, { label: event.target.value })} />
             </label>
+            
             <label>
               Тип
               <select
@@ -576,6 +597,20 @@ function VariablesPage({
                 {Object.entries(variableTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </label>
+
+            {/* 🔥 ПОЛЕ ДЛЯ ОПЦИЙ С ОТДЕЛЬНЫМ СОСТОЯНИЕМ */}
+            {variable.type === 'select' && (
+              <label className="full-width">
+                Опции (через запятую)
+                <input
+                  value={optionsStrings[variable.id] || ''}
+                  onChange={(event) => updateOptions(variable.id, event.target.value)}
+                  placeholder="Красный, Синий, Зеленый"
+                />
+                <span className="hint">Введите значения через запятую</span>
+              </label>
+            )}
+
             <label>
               Значение по умолчанию
               <input
@@ -583,10 +618,12 @@ function VariablesPage({
                 onChange={(event) => updateVariable(variable.id, { defaultValue: event.target.value })}
               />
             </label>
+
             <label>
               Подсказка
               <input value={variable.hint} onChange={(event) => updateVariable(variable.id, { hint: event.target.value })} />
             </label>
+
             <label className="checkbox-label">
               <input
                 type="checkbox"

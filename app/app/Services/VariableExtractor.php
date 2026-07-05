@@ -128,20 +128,11 @@ class VariableExtractor
      */
     private function extractKeysFromDocx(string $absolutePath): array
     {
-        $processor = new TemplateProcessor($absolutePath);
-        $processor->setMacroChars('{{', '}}');
+        $text = $this->readPlainText($absolutePath);
 
-        $keys = [];
-        foreach ($processor->getVariables() as $variable) {
-            $key = trim($variable);
-            // Block-closing markers ({{/key}}) are not standalone variables.
-            if ($key === '' || str_starts_with($key, '/') || in_array($key, $keys, true)) {
-                continue;
-            }
-            $keys[] = $key;
-        }
+        preg_match_all('/\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/', $text, $matches);
 
-        return $keys;
+        return array_values(array_unique($matches[1]));
     }
 
     private function readPlainText(string $absolutePath): string
@@ -161,3 +152,4 @@ class VariableExtractor
         return preg_replace('/<[^>]+>/', '', $xml);
     }
 }
+

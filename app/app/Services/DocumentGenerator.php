@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 use PhpOffice\PhpWord\Settings;
 use PhpOffice\PhpWord\TemplateProcessor;
 use RuntimeException;
+use ZipArchive;
 
 class DocumentGenerator
 {
@@ -36,7 +37,19 @@ class DocumentGenerator
         // Required by ТЗ 4.2 ("экранируются спецсимволы разметки"); off by default in PhpWord.
         Settings::setOutputEscapingEnabled(true);
 
-        $processor = new TemplateProcessor($version->full_path);
+        // Work on a copy so we can normalise the XML beforehand
+        $relativePath = 'documents/'.Str::random(40).'.docx';
+        $absolutePath = storage_path('app/public/'.$relativePath);
+        if (! is_dir(dirname($absolutePath))) {
+            mkdir(dirname($absolutePath), 0755, true);
+        }
+        copy($version->full_path, $absolutePath);
+
+        // 1. Normalise the XML – merge {{…}} that Word split across <w:r>/<w:t> runs
+        $this->normalisePlaceholdersInDocx($absolutePath);
+
+        // 2. Use standard TemplateProcessor on the normalised file
+        $processor = new TemplateProcessor($absolutePath);
         $processor->setMacroChars('{{', '}}');
 
         foreach ($variables as $variable) {
@@ -55,18 +68,69 @@ class DocumentGenerator
             $processor->setValue($variable->key, $this->formatScalar($variable, $value));
         }
 
-        $relativePath = 'documents/'.Str::random(40).'.docx';
-        $absolutePath = storage_path('app/public/'.$relativePath);
-        if (! is_dir(dirname($absolutePath))) {
-            mkdir(dirname($absolutePath), 0755, true);
-        }
         $processor->saveAs($absolutePath);
 
         return $relativePath;
     }
 
     /**
-     * Fill a pdf's AcroForm fields via pdftk (ТЗ 6: "разметка полей формы"), then flatten
+     * Open the docx as a zip, read word/document.xml, collapse every {{…}} placeholder
+     * that is scattered across multiple <w:r> elements into a single <w:r><w:t xml:space="preserve">…</w:t></w:r>.
+     */
+    private function normalisePlaceholdersInDocx(string $docxPath): void
+    {
+        $zip = new ZipArchive();
+        if ($zip->open($docxPath) !== true) {
+            throw new RuntimeException('Не удалось открыть docx для нормализации.');
+        }
+
+        $xml = $zip->getFromName('word/document.xml');
+        if ($xml === false) {
+            $zip->close();
+            throw new RuntimeException('Не удалось прочитать word/document.xml');
+        }
+
+        // Merge all text content inside <w:r><w:t>…</w:t></w:r> that is part of a {{…}} sequence
+        // Strategy: replace any occurrence of {{</w:t></w:r>...<w:r><w:t> with nothing,
+        // and any occurrence of </w:t></w:r>...<w:r><w:t>}} with nothing,
+        // then replace the whole merged placeholder with the clean {{KEY}} form.
+        // Simpler: collapse <w:r>…</w:r> runs so that {{ and }} are in the same run.
+
+        // Remove run-breaks between {{ and }} characters
+        // Pattern: }} or {{ can have arbitrary XML between their brace characters
+        // We'll replace {{...XML...KEY...XML...}} with {{KEY}} in the raw XML
+
+        // Actually, the simplest robust approach: merge ALL consecutive <w:r> text content
+        // into single runs. PhpWord's TemplateProcessor only needs each {{KEY}} to be
+        // inside ONE <w:t> element.
+
+        // Merge all <w:r> elements inside a single <w:p>: take all their text, put in one <w:r>
+        $xml = preg_replace_callback(
+            '#(<w:p\b[^>]*>)(.*?)(</w:p>)#us',
+            function (array $m): string {
+                $inner = $m[2];
+                // Extract all text from <w:t> elements within this paragraph
+                preg_match_all('#<w:t\b[^>]*?>(.*?)</w:t>#us', $inner, $textMatches);
+                $combinedText = implode('', $textMatches[1]);
+
+                // Remove all existing <w:r>...</w:r>
+                $cleaned = preg_replace('#<w:r\b[^>]*>.*?</w:r>#us', '', $inner);
+
+                // Insert a single <w:r> with all the text
+                $escaped = htmlspecialchars($combinedText, ENT_XML1, 'UTF-8');
+                $singleRun = '<w:r><w:t xml:space="preserve">' . $escaped . '</w:t></w:r>';
+
+                return $m[1] . $cleaned . $singleRun . $m[3];
+            },
+            $xml
+        );
+
+        $zip->addFromString('word/document.xml', $xml);
+        $zip->close();
+    }
+
+    /**
+     * Fill a pdf's AcroForm fields via pdftk, then flatten
      * so the result is a stable, non-editable document. Table/repeating variables aren't
      * representable as static form fields, so they're skipped for pdf templates.
      */
@@ -85,7 +149,6 @@ class DocumentGenerator
 
             if ($field['type'] === 'Button') {
                 $fdfFields[] = $this->fdfNameField($variable->key, $value ? ($field['onValue'] ?? 'Yes') : 'Off');
-
                 continue;
             }
 

@@ -55,6 +55,8 @@ Git — скачайте с сайта git-scm.com/downloads, установит
 
 Запустить backend — docker compose up -d. Остановить backend — docker compose down. Пересобрать контейнеры — docker compose up -d --build. Посмотреть логи app — docker compose logs -f app. Посмотреть логи db — docker compose logs -f db. Зайти в контейнер — docker exec -it docs-app bash.
 
+Команда для запуска в контейнере (Если будет ошиибка): docker exec docs-app bash -c "cd /var/www/app && php artisan serve --host=0.0.0.0 --port=8000" 
+После включайте frontend
 ## Возможные проблемы
 
 Если frontend не подключается к API — убедитесь что backend запущен (docker ps). Если ошибка CORS — перезапустите frontend.

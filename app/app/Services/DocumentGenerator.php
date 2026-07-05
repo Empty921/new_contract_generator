@@ -61,7 +61,12 @@ class DocumentGenerator
             }
 
             if ($variable->type === 'boolean' && $this->extractor->hasBlock($version->full_path, $variable->key)) {
+                // Для boolean с блоком: если активна — выводим default_value, иначе пустота
                 $this->applyConditionalBlock($processor, $variable->key, (bool) $value);
+                // Если активна, подставляем значение в плейсхолдер внутри блока
+                if ($value) {
+                    $processor->setValue($variable->key, $this->formatScalar($variable, $value));
+                }
                 continue;
             }
 
@@ -90,20 +95,6 @@ class DocumentGenerator
             throw new RuntimeException('Не удалось прочитать word/document.xml');
         }
 
-        // Merge all text content inside <w:r><w:t>…</w:t></w:r> that is part of a {{…}} sequence
-        // Strategy: replace any occurrence of {{</w:t></w:r>...<w:r><w:t> with nothing,
-        // and any occurrence of </w:t></w:r>...<w:r><w:t>}} with nothing,
-        // then replace the whole merged placeholder with the clean {{KEY}} form.
-        // Simpler: collapse <w:r>…</w:r> runs so that {{ and }} are in the same run.
-
-        // Remove run-breaks between {{ and }} characters
-        // Pattern: }} or {{ can have arbitrary XML between their brace characters
-        // We'll replace {{...XML...KEY...XML...}} with {{KEY}} in the raw XML
-
-        // Actually, the simplest robust approach: merge ALL consecutive <w:r> text content
-        // into single runs. PhpWord's TemplateProcessor only needs each {{KEY}} to be
-        // inside ONE <w:t> element.
-
         // Merge all <w:r> elements inside a single <w:p>: take all their text, put in one <w:r>
         $xml = preg_replace_callback(
             '#(<w:p\b[^>]*>)(.*?)(</w:p>)#us',
@@ -112,7 +103,7 @@ class DocumentGenerator
                 // Extract all text from <w:t> elements within this paragraph
                 preg_match_all('#<w:t\b[^>]*?>(.*?)</w:t>#us', $inner, $textMatches);
                 $combinedText = implode('', $textMatches[1]);
-
+                
                 // Remove all existing <w:r>...</w:r>
                 $cleaned = preg_replace('#<w:r\b[^>]*>.*?</w:r>#us', '', $inner);
 
@@ -308,7 +299,7 @@ class DocumentGenerator
         }
 
         return match ($variable->type) {
-            'boolean' => $value ? 'Да' : 'Нет',
+            'boolean' => $value ? (string) ($variable->default_value ?? '') : '',
             'date' => Carbon::parse($value)->format('d.m.Y'),
             'currency' => number_format((float) $value, 2, ',', ' ').' ₽',
             default => (string) $value,
